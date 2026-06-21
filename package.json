@@ -1,0 +1,16 @@
+{
+  "name": "discord-antispam-bot",
+  "version": "1.0.0",
+  "description": "Discord anti-spam bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.21.0",
+    "dotenv": "^16.6.1"
+  },
+  "engines": {
+    "node": ">=20 <22"
+  }
+}
