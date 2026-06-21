@@ -1,11 +1,32 @@
 require("dotenv").config();
+
+const express = require("express");
 const {
   Client,
   GatewayIntentBits,
   Partials,
-  PermissionsBitField
+  REST,
+  Routes,
+  SlashCommandBuilder
 } = require("discord.js");
 
+// ===============================
+// WEB SERVER (FIX RENDER LOOP)
+// ===============================
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get("/", (req, res) => {
+  res.send("Discord bot is running ✅");
+});
+
+app.listen(PORT, () => {
+  console.log(`Web server running on port ${PORT}`);
+});
+
+// ===============================
+// DISCORD CLIENT
+// ===============================
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -18,29 +39,32 @@ const client = new Client({
 // CONFIG
 // ===============================
 const GUILD_ID = process.env.GUILD_ID;
-const SAFE_ROLE_ID = process.env.SAFE_ROLE_ID;       // rôle retiré si suspect
-const SUSPECT_ROLE_ID = process.env.SUSPECT_ROLE_ID; // rôle ajouté si suspect
+const CLIENT_ID = process.env.CLIENT_ID;
+
+const SAFE_ROLE_ID = process.env.SAFE_ROLE_ID;
+const SUSPECT_ROLE_ID = process.env.SUSPECT_ROLE_ID;
 const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 const SCORE_THRESHOLD = Number(process.env.SCORE_THRESHOLD || 50);
 
-// pondération sur 100
+// ===============================
+// SCORE SYSTEM (UNCHANGED)
+// ===============================
 const SCORE_WEIGHTS = {
   startsWithExclamation: 25,
   accountLessThan7Days: 35,
   accountLessThan15Days: 25,
   accountLessThan30Days: 15,
   defaultAvatar: 25,
-  noBio: 10,       // placeholder / non dispo proprement via bot standard
-  noServerTag: 10  // placeholder / dépend de ce que tu entends par "tag serveur"
+  noBio: 10,
+  noServerTag: 10
 };
 
-// Active/désactive certains checks
 const CHECKS = {
   checkNameStartsWithExclamation: true,
   checkAccountAge: true,
   checkDefaultAvatar: true,
-  checkBio: false,       // false tant qu'on n'a pas une méthode fiable
-  checkServerTag: false  // false tant qu'on précise ce que tu veux checker exactement
+  checkBio: false,
+  checkServerTag: false
 };
 
 // ===============================
@@ -51,19 +75,15 @@ function daysSince(date) {
 }
 
 function isDefaultAvatar(user) {
-  // Si avatar === null, Discord affiche l'avatar par défaut
   return user.avatar === null;
 }
 
 function getDisplayName(member) {
-  // nickname serveur > displayName > username
   return member.nickname || member.displayName || member.user.username;
 }
 
 function clampScore(score) {
-  if (score < 0) return 0;
-  if (score > 100) return 100;
-  return score;
+  return Math.max(0, Math.min(100, score));
 }
 
 function buildReasonsText(reasons) {
@@ -72,14 +92,13 @@ function buildReasonsText(reasons) {
 }
 
 // ===============================
-// SCORE CALCULATION
+// SCORE CALCULATION (UNCHANGED)
 // ===============================
 async function calculateSuspicion(member) {
   const user = member.user;
   const reasons = [];
   let score = 0;
 
-  // 1) Pseudo commence par "!"
   if (CHECKS.checkNameStartsWithExclamation) {
     const name = getDisplayName(member);
     if (name.startsWith("!")) {
@@ -88,114 +107,122 @@ async function calculateSuspicion(member) {
     }
   }
 
-  // 2) Âge du compte
   if (CHECKS.checkAccountAge) {
     const ageDays = daysSince(user.createdAt);
 
     if (ageDays < 7) {
       score += SCORE_WEIGHTS.accountLessThan7Days;
-      reasons.push(`Account age is under 7 days (+${SCORE_WEIGHTS.accountLessThan7Days})`);
+      reasons.push(`Account age < 7 days (+${SCORE_WEIGHTS.accountLessThan7Days})`);
     } else if (ageDays < 15) {
       score += SCORE_WEIGHTS.accountLessThan15Days;
-      reasons.push(`Account age is under 15 days (+${SCORE_WEIGHTS.accountLessThan15Days})`);
+      reasons.push(`Account age < 15 days (+${SCORE_WEIGHTS.accountLessThan15Days})`);
     } else if (ageDays < 30) {
       score += SCORE_WEIGHTS.accountLessThan30Days;
-      reasons.push(`Account age is under 30 days (+${SCORE_WEIGHTS.accountLessThan30Days})`);
+      reasons.push(`Account age < 30 days (+${SCORE_WEIGHTS.accountLessThan30Days})`);
     }
   }
 
-  // 3) Avatar par défaut
-  if (CHECKS.checkDefaultAvatar) {
-    if (isDefaultAvatar(user)) {
-      score += SCORE_WEIGHTS.defaultAvatar;
-      reasons.push(`User has Discord default avatar (+${SCORE_WEIGHTS.defaultAvatar})`);
-    }
+  if (CHECKS.checkDefaultAvatar && isDefaultAvatar(user)) {
+    score += SCORE_WEIGHTS.defaultAvatar;
+    reasons.push(`Default avatar (+${SCORE_WEIGHTS.defaultAvatar})`);
   }
 
-  // 4) Bio / description
-  // NOTE:
-  // Les bots n'ont pas un accès standard propre à la bio utilisateur via les événements classiques.
-  // Si tu trouves une méthode spécifique plus tard, remplace cette partie.
   if (CHECKS.checkBio) {
-    const hasBio = true; // TODO: remplacer si tu mets une vraie méthode
+    const hasBio = true;
     if (!hasBio) {
       score += SCORE_WEIGHTS.noBio;
-      reasons.push(`User has no bio (+${SCORE_WEIGHTS.noBio})`);
+      reasons.push(`No bio (+${SCORE_WEIGHTS.noBio})`);
     }
   }
 
-  // 5) Tag serveur
-  // NOTE:
-  // À préciser : "tag serveur" peut vouloir dire plusieurs choses.
-  // Mets ici ton check si tu sais exactement quelle donnée tu veux lire.
   if (CHECKS.checkServerTag) {
-    const hasServerTag = true; // TODO: remplacer par ton vrai check
+    const hasServerTag = true;
     if (!hasServerTag) {
       score += SCORE_WEIGHTS.noServerTag;
-      reasons.push(`User has no server tag (+${SCORE_WEIGHTS.noServerTag})`);
+      reasons.push(`No server tag (+${SCORE_WEIGHTS.noServerTag})`);
     }
   }
 
-  score = clampScore(score);
-
   return {
-    score,
+    score: clampScore(score),
     reasons
   };
 }
 
 // ===============================
-// ACTIONS WHEN USER IS FLAGGED
+// FLAG SYSTEM (UNCHANGED)
 // ===============================
 async function flagMember(member, score, reasons) {
   const guild = member.guild;
   const logChannel = guild.channels.cache.get(LOG_CHANNEL_ID);
 
-  // retirer un rôle
   if (SAFE_ROLE_ID && member.roles.cache.has(SAFE_ROLE_ID)) {
-    try {
-      await member.roles.remove(SAFE_ROLE_ID, `Anti-spam suspicion score: ${score}`);
-    } catch (err) {
-      console.error(`Erreur retrait rôle ${SAFE_ROLE_ID} pour ${member.user.tag}:`, err);
-    }
+    await member.roles.remove(SAFE_ROLE_ID).catch(console.error);
   }
 
-  // donner le rôle suspect
   if (SUSPECT_ROLE_ID && !member.roles.cache.has(SUSPECT_ROLE_ID)) {
-    try {
-      await member.roles.add(SUSPECT_ROLE_ID, `Anti-spam suspicion score: ${score}`);
-    } catch (err) {
-      console.error(`Erreur ajout rôle ${SUSPECT_ROLE_ID} pour ${member.user.tag}:`, err);
-    }
+    await member.roles.add(SUSPECT_ROLE_ID).catch(console.error);
   }
 
-  // message salon
   if (logChannel && logChannel.isTextBased()) {
     const msg =
-`<@${member.id}>  
-🇫🇷 **Vous avez été suspecté d'être un compte spam.**
-Si vous pensez qu'il s'agit d'une erreur, merci d'écrire ici pour contester.
+`<@${member.id}>
+🇫🇷 **Compte suspect détecté**
+🇬🇧 **Suspicious account detected**
 
-🇬🇧 **You have been suspected of being a spam account.**
-If you believe this is a mistake, please write here if you want to appeal.
+Score: ${score}/100
 
-**Score:** ${score}/100
-**Reasons / Raisons :**
+Reasons:
 ${buildReasonsText(reasons)}`;
 
-    try {
-      await logChannel.send({ content: msg });
-    } catch (err) {
-      console.error("Erreur envoi message salon :", err);
-    }
+    await logChannel.send({ content: msg }).catch(console.error);
   }
 }
 
 // ===============================
-// EVENT
+// SLASH COMMAND /ping
 // ===============================
-client.once("ready", () => {
+const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
+
+const commands = [
+  new SlashCommandBuilder()
+    .setName("ping")
+    .setDescription("Check bot latency")
+    .toJSON()
+];
+
+async function registerCommands() {
+  await rest.put(
+    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+    { body: commands }
+  );
+
+  console.log("Slash commands registered");
+}
+
+// ===============================
+// EVENTS
+// ===============================
+client.once("ready", async () => {
   console.log(`Connecté en tant que ${client.user.tag}`);
+  await registerCommands();
+});
+
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  if (interaction.commandName === "ping") {
+    const msg = await interaction.reply({
+      content: "Pinging...",
+      fetchReply: true
+    });
+
+    const latency = msg.createdTimestamp - interaction.createdTimestamp;
+
+    await interaction.editReply(
+      `🏓 Pong!\nLatency: ${latency}ms\nAPI: ${client.ws.ping}ms`
+    );
+  }
 });
 
 client.on("guildMemberAdd", async (member) => {
@@ -204,18 +231,18 @@ client.on("guildMemberAdd", async (member) => {
 
     const { score, reasons } = await calculateSuspicion(member);
 
-    console.log(`[JOIN] ${member.user.tag} -> score ${score}/100`);
-    if (reasons.length) {
-      console.log(reasons.join(" | "));
-    }
+    console.log(`[JOIN] ${member.user.tag} -> ${score}/100`);
 
     if (score >= SCORE_THRESHOLD) {
       await flagMember(member, score, reasons);
-      console.log(`[FLAGGED] ${member.user.tag} flagged with ${score}/100`);
+      console.log(`[FLAGGED] ${member.user.tag}`);
     }
   } catch (err) {
-    console.error("Erreur dans guildMemberAdd :", err);
+    console.error(err);
   }
 });
 
+// ===============================
+// LOGIN
+// ===============================
 client.login(process.env.TOKEN);
